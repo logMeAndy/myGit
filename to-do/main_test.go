@@ -22,7 +22,7 @@ func TestRun(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			todoList := run(tt.args, []todo.ToDoTask{}) // an empty list
+			todoList, _ := todo.Run(tt.args, []todo.ToDoTask{}) // an empty list
 			fmt.Println(todoList)
 
 			if tt.expected == "" {
@@ -50,7 +50,8 @@ func TestRun(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			todoList := run(tt.args, testTasks)
+			todoList, _ := todo.Run(tt.args, testTasks)
+
 			fmt.Println(todoList)
 
 			if tt.expected == "" { //when no task

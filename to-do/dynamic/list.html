@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>To-Do List</title></head>
+<body>
+  <h1>Your Tasks</h1>
+  <ul>
+    {{range .}}
+      <li>{{.Description}} — <strong>{{.Status}}</strong></li>
+    {{else}}
+      <li>No tasks yet.</li>
+    {{end}}
+  </ul>
+</body>
+</html>

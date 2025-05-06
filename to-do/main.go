@@ -2,93 +2,57 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+	"to-do/handler"
 	"to-do/todo"
 )
 
-const todoFile = "todo.json"
-
 func main() {
 	initLogwithTraceID()
-
-	todoList, err := todo.LoadFile(todoFile)
+	todoList, err := todo.LoadFile(todo.TodoFile)
 	if err != nil {
 		slog.Error("Failed to load tasks", "error", err)
 	}
 
-	todoList = run(os.Args, todoList)
+	todoList, err = todo.Run(os.Args, todoList)
+	if err != nil {
+		slog.Error("not found", "error", err)
+		return
+	}
 
 	//fmt.Println(todoList, len(todoList))
 
-	err = todo.SaveFile(todoList, todoFile)
+	err = todo.SaveFile(todoList, todo.TodoFile)
 	if err != nil {
 		slog.Error("Failed to saving tasks", "error", err)
 		return
 	}
-	waitForInterrupt()
-}
+	//waitForInterrupt()
 
-func run(args []string, todoList []todo.ToDoTask) []todo.ToDoTask {
-	fs := flag.NewFlagSet("todo", flag.ContinueOnError)
+	mux := http.NewServeMux()
 
-	var taskDesc = fs.String("task", "", "Task description e.g. -task=newItemDescription (optional -status=newStatus) (default not started))")
-	var status = fs.String("status", "", "New status e.g. not started, completed, started, etc.,")
-	var updateIndex = fs.Int("update", -1, "Index of task to update, e.g. update=0 -task=newValue (optional -status=newStatus)")
-	var deleteIndex = fs.Int("delete", -1, "Index of task to delete (e.g. delete=0 )")
+	fs := http.FileServer(http.Dir("static"))
+	mux.Handle("/about/", http.StripPrefix("/about/", fs))
 
-	fs.Parse(args[1:]) // skip program name
+	mux.Handle("/list", handler.WithLoggingAndTrace(http.HandlerFunc(handler.GetList)))
 
-	slog.Debug("args", "deleteIndex", deleteIndex, "updateIndex", updateIndex, "status", status, "taskDesc", taskDesc)
-	switch {
-	case *updateIndex >= 0:
-		slog.Debug("updating index...", slog.Int("updateIndex", *updateIndex))
-		if *taskDesc != "" && *updateIndex < len(todoList) {
-			if *status != "" {
-				todoList[*updateIndex].Description = *taskDesc
-				todoList[*updateIndex].Status = *status
-			} else {
-				todoList[*updateIndex].Description = *taskDesc
-			}
-			slog.Info("Task updated", "Index", todoList[*updateIndex])
-		} else if *status != "" && *updateIndex < len(todoList) {
-			todoList[*updateIndex].Status = *status
-			slog.Info("Task updated", "Index", todoList[*updateIndex])
-		} else {
-			slog.Info("Invalid index or missing task description, please check current TODO list or help using -h", "Index", *updateIndex, "Length", len(todoList))
-		}
-	case *taskDesc != "":
-		slog.Debug("adding task...", "task", *taskDesc)
-		var t todo.ToDoTask
-		if *status != "" {
-			t = todo.ToDoTask{Description: *taskDesc, Status: *status}
-			todoList = append(todoList, t)
-		} else {
-			t = todo.ToDoTask{Description: *taskDesc, Status: "not started"}
-			todoList = append(todoList, t)
-		}
-		slog.Info("Added new task", "task", t)
-	case *deleteIndex >= 0 && *deleteIndex < len(todoList):
-		slog.Debug("deleting index...", "task", *deleteIndex)
-		if *deleteIndex < len(todoList) {
-			deletedTask := todoList[*deleteIndex]
-			todoList = append(todoList[:*deleteIndex], todoList[*deleteIndex+1:]...)
-			slog.Info("Deleted task", "index", *deleteIndex, "task", deletedTask)
-		} else {
-			slog.Info("Invalid index or missing task description, please check current TODO list or help using -h", "Index", *deleteIndex, "Length", len(todoList))
-		}
-	default:
-		fmt.Println("Current To-Do List :")
-		for i, t := range todoList {
-			fmt.Printf("%d. %s, %s \n", i, t.Description, t.Status)
-		}
+	mux.Handle("POST /todo", handler.WithLoggingAndTrace(http.HandlerFunc(handler.Create)))
+	mux.Handle("PUT /todo/{id}", handler.WithLoggingAndTrace(http.HandlerFunc(handler.UpdateByID)))
+	mux.Handle("DELETE /todo/{id}", handler.WithLoggingAndTrace(http.HandlerFunc(handler.DeleteByID)))
+	mux.Handle("GET /todo/{id}", handler.WithLoggingAndTrace(http.HandlerFunc(handler.FindByID)))
+	mux.Handle("GET /todo", handler.WithLoggingAndTrace(http.HandlerFunc(handler.GetAll)))
+
+	slog.Info("Http Server listining on port 8080")
+	if err := http.ListenAndServe(":8080", mux); err != nil {
+		slog.Error("Error Listining to port 8080", err)
 	}
-	return todoList
+
 }
 
 func initLogwithTraceID() {
