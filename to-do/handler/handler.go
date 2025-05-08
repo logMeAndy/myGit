@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 	"to-do/todo"
 )
 
@@ -133,6 +134,7 @@ func DeleteByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func FindByID(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	slog.SetDefault(LoggerFromContext(r.Context()))
 	slog.Debug("received request to find todo item")
 	todoList, err := todo.LoadFile(todo.TodoFile)
@@ -161,6 +163,8 @@ func FindByID(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(todoItem)
 	slog.Info("returned one task", "index", idv, "task", todoItem)
+	slog.Debug("Request timings", "method", r.Method, "Url", r.RequestURI, "time", time.Since(start))
+
 }
 
 func GetAll(w http.ResponseWriter, r *http.Request) {
