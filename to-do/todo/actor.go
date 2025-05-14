@@ -18,7 +18,7 @@ type Response struct {
 	Tasks []ToDoTask // and you can still return the whole slice
 }
 
-var ReqChan = make(chan Request, 10)
+var ReqChan = make(chan Request, 1000)
 
 // Actor runs in one goroutine and serializes access to `tasks`.
 func Actor(initial []ToDoTask) chan Request {
@@ -45,10 +45,11 @@ func Actor(initial []ToDoTask) chan Request {
 				t := ToDoTask{Description: req.Task.Description, Status: "not started"}
 				tasks = append(tasks, t)
 			}
-			if err := SaveFile(tasks, TodoFile); err != nil {
-				slog.Error("actor: failed to save tasks", "error", err)
-			}
-
+			go func(s []ToDoTask) {
+				if err := SaveFile(s, TodoFile); err != nil {
+					slog.Error("actor: failed to save tasks", "error", err)
+				}
+			}(append([]ToDoTask(nil), tasks...))
 			req.ReplyCh <- Response{Task: &tasks[len(tasks)-1]}
 			//slog.Info("Added new task", "task", tasks)
 

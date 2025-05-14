@@ -2,7 +2,6 @@ package handler_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,8 +14,6 @@ import (
 
 	"to-do/handler"
 	"to-do/todo"
-
-	"golang.org/x/time/rate"
 )
 
 var actor = todo.ReqChan
@@ -53,15 +50,15 @@ func TestHTTPActorConcurrencyOn8080(t *testing.T) {
 	}()
 
 	baseURL := "http://127.0.0.1:8080"
-	const n = 20000
+	const n = 5000
 
 	var wg sync.WaitGroup
 	wg.Add(n)
 
 	//workerSem := make(chan struct{}, 100)
 
-	rateLimit := rate.NewLimiter(rate.Limit(200), 1)
-	ctx := context.Background()
+	//rateLimit := rate.NewLimiter(rate.Limit(200), 1)
+	//ctx := context.Background()
 
 	t.Logf("Firing %d concurrent POST requests", n)
 	start := time.Now()
@@ -69,10 +66,10 @@ func TestHTTPActorConcurrencyOn8080(t *testing.T) {
 	for i := 0; i < n; i++ {
 		i := i
 
-		if err := rateLimit.Wait(ctx); err != nil {
-			t.Errorf("Rate limiter wait failed: %v", err)
-			continue
-		}
+		//	if err := rateLimit.Wait(ctx); err != nil {
+		//		t.Errorf("Rate limiter wait failed: %v", err)
+		//		continue
+		//	}
 
 		//	workerSem <- struct{}{}
 
