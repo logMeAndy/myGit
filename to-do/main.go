@@ -14,7 +14,13 @@ import (
 	"to-do/todo"
 )
 
+var actor = todo.ReqChan
+
 func main() {
+
+	initialTasks, _ := todo.LoadFile(todo.TodoFile)
+	go todo.Actor(initialTasks)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -34,20 +40,10 @@ func main() {
 func runCLI(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
 	initLogwithTraceID()
-	todoList, err := todo.LoadFile(todo.TodoFile)
-	if err != nil {
-		slog.Error("Failed to load tasks", "error", err)
-	}
 
-	todoList, err = todo.Run(os.Args, todoList)
+	err := todo.Run(os.Args, actor)
 	if err != nil {
 		slog.Error("not found", "error", err)
-		return
-	}
-	//fmt.Println(todoList, len(todoList))
-	err = todo.SaveFile(todoList, todo.TodoFile)
-	if err != nil {
-		slog.Error("Failed to saving tasks", "error", err)
 		return
 	}
 	slog.Debug("runCLI goroutine waiting for context done")
@@ -62,15 +58,15 @@ func runHttpServer(ctx context.Context, wg *sync.WaitGroup) {
 	mux := http.NewServeMux()
 
 	fs := http.FileServer(http.Dir("static"))
-	mux.Handle("/about/", http.StripPrefix("/about/", fs))
+	mux.Handle("/about/", http.StripPrefix("/about/", fs))                              //static page
+	mux.Handle("/list", handler.WithLoggingAndTrace(http.HandlerFunc(handler.GetList))) //dyanmic page
 
-	mux.Handle("/list", handler.WithLoggingAndTrace(http.HandlerFunc(handler.GetList)))
-
-	mux.Handle("POST /todo", handler.WithLoggingAndTrace(http.HandlerFunc(handler.Create)))
-	mux.Handle("PUT /todo/{id}", handler.WithLoggingAndTrace(http.HandlerFunc(handler.UpdateByID)))
-	mux.Handle("DELETE /todo/{id}", handler.WithLoggingAndTrace(http.HandlerFunc(handler.DeleteByID)))
-	mux.Handle("GET /todo/{id}", handler.WithLoggingAndTrace(http.HandlerFunc(handler.FindByID)))
-	mux.Handle("GET /todo", handler.WithLoggingAndTrace(http.HandlerFunc(handler.GetAll)))
+	//APIs
+	mux.Handle("PUT /todo/{id}", handler.WithLoggingAndTrace(handler.UpdateByID(actor)))
+	mux.Handle("DELETE /todo/{id}", handler.WithLoggingAndTrace(handler.DeleteByID(actor)))
+	mux.Handle("GET /todo", handler.WithLoggingAndTrace(http.HandlerFunc(handler.GetAll(actor))))
+	mux.Handle("POST /todo", handler.WithLoggingAndTrace(handler.Create(actor)))
+	mux.Handle("GET /todo/{id}", handler.WithLoggingAndTrace(handler.FindByID(actor)))
 
 	server := &http.Server{Addr: ":8080", Handler: mux}
 	go func() {

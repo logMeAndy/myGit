@@ -34,6 +34,9 @@ func LoadFile(todoFile string) ([]ToDoTask, error) {
 }
 
 func SaveFile(tasks []ToDoTask, todoFile string) error {
+	//var mu sync.RWMutex
+	//mu.Lock()
+	//defer mu.Unlock()
 	bytes, err := json.MarshalIndent(tasks, "", "  ")
 	if err != nil {
 		slog.Error("Failed to marshall file ", "error", err)

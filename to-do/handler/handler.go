@@ -2,8 +2,6 @@ package handler
 
 import (
 	"encoding/json"
-	"errors"
-	"fmt"
 	"html/template"
 	"io"
 	"log/slog"
@@ -21,165 +19,200 @@ func requestMessage(r *http.Request) *todo.ToDoTask {
 		slog.Error("could not read request", "Body length", len(body))
 		return nil
 	}
+	slog.Debug("raw request body", "body", string(body))
 	if json.Unmarshal(body, &task) != nil {
 		slog.Error("Invalid JSON", "Body length", len(body))
 		return nil
 	}
-	slog.Debug("Unmarshal data ", "task list", task)
+	slog.Debug("Unmarshal parsed task data ", "task list", task)
 	return &task
 }
 
-func process(args []string, id string) error {
-	todoList, err := todo.LoadFile(todo.TodoFile)
-	if err != nil {
-		slog.Error("Failed to load tasks", "error", err)
-		return err
+func Create(actor chan todo.Request) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		slog.SetDefault(LoggerFromContext(r.Context()))
+		//slog.Info("received request to create a todo")
+		task := requestMessage(r)
+		if task == nil {
+			slog.Error("Invalid task:", "task", task)
+			http.Error(w, `{"error":"could not read request"}`, http.StatusBadRequest)
+			return
+		}
+		//slog.Debug("sending add command", "task", task)
+		reply := make(chan todo.Response)
+		actor <- todo.Request{Op: "add", Task: *task, ReplyCh: reply}
+		res := <-reply
+		//slog.Debug("received actor response", "response", res)
+		if res.Err != nil {
+			slog.Error("Invalid task:", "task", task)
+			http.Error(w, `{"error":"could not read request"}`, http.StatusInternalServerError)
+			return
+		}
+		//SaveSnapshot(actor)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(task)
 	}
-	slog.Debug("User Request Path Value", "length", len(todoList), "PathValue", id)
 
-	if id != "" { //create and find
-		idv, err := strconv.Atoi(id)
-		if err != nil {
-			slog.Error("invalid index parameter", "raw", id, "error", err)
-			return errors.New("invalid index parameter")
+}
+
+/*
+func SaveSnapshot(actor chan todo.Request) {
+	slog.Debug("requesting full list to be saved")
+	listCh := make(chan todo.Response)
+	actor <- todo.Request{Op: "list", ReplyCh: listCh}
+	listRes := <-listCh
+	slog.Debug("received full list", "count", len(listRes.Tasks))
+	//todo.SaveFile((<-listCh).Tasks, todo.TodoFile)
+	if err := todo.SaveFile(listRes.Tasks, todo.TodoFile); err != nil {
+		slog.Error("failed to save tasks", "error", err)
+	}
+
+} */
+
+func UpdateByID(actor chan todo.Request) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		slog.SetDefault(LoggerFromContext(r.Context()))
+		slog.Info("received request to update todo item")
+		task := requestMessage(r)
+		if task == nil {
+			slog.Error("Invalid task:", "task", task)
+			http.Error(w, `{"error":"could not read request"}`, http.StatusBadRequest)
+			return
 		}
 
-		// now check bounds: valid indices are 0 through len(todoList)-1
-		if idv < 0 || idv >= len(todoList) {
-			slog.Error("index out of range", "index", idv, "length", len(todoList))
-			return fmt.Errorf("index %d out of range", idv)
+		id := r.PathValue("id")
+		if id != "" { //create and findAll
+			idv, err := strconv.Atoi(id)
+			if err != nil {
+				slog.Error("invalid index parameter", "raw", id, "error", err)
+				http.Error(w, `{"error":"Task not found"}`, http.StatusNotFound)
+				return
+			}
+
+			reply := make(chan todo.Response)
+			actor <- todo.Request{Op: "update", Task: *task, Index: idv, ReplyCh: reply}
+			res := <-reply
+			slog.Debug("received actor response", "response", res)
+			if res.Err != nil {
+				slog.Error("Invalid task:", "index", id)
+				http.Error(w, `{"error":"could not read request"}`, http.StatusInternalServerError)
+				return
+			}
+
+		} else {
+			slog.Error("no index parameter", "index", id)
+			http.Error(w, `{"error":"Task not found"}`, http.StatusNotFound)
+			return
 		}
-	}
-	//	todoList[len(todoList)-1]
 
-	todoList, err = todo.Run(args, todoList)
-	if err != nil {
-		slog.Error("Run failed", "error", err)
-		return err
-	}
+		//SaveSnapshot(actor)
 
-	err = todo.SaveFile(todoList, todo.TodoFile)
-	if err != nil {
-		slog.Error("Failed to saving tasks", "error", err)
-		return err
+		if err := json.NewEncoder(w).Encode(task); err != nil {
+			slog.Error("Failed to encode task response", "error", err)
+			http.Error(w, `{"error":"Internal Server Error"}`, http.StatusInternalServerError)
+			return
+		}
+		//	w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		//json.NewEncoder(w).Encode(`{"error":""}`)
+		slog.Info("Update OK")
 	}
-	return nil
 }
 
-func Create(w http.ResponseWriter, r *http.Request) {
-	slog.SetDefault(LoggerFromContext(r.Context()))
-	slog.Info("received request to create a todo")
-	task := requestMessage(r)
-	if task == nil {
-		slog.Error("Invalid task:", "task", task)
-		http.Error(w, `{"error":"could not read request"}`, http.StatusBadRequest)
-		return
+func DeleteByID(actor chan todo.Request) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		slog.SetDefault(LoggerFromContext(r.Context()))
+		slog.Info("received request to delete a todo item")
+
+		id := r.PathValue("id")
+		if id != "" { //create and findAll
+			idv, err := strconv.Atoi(id)
+			if err != nil {
+				slog.Error("invalid index parameter", "raw", id, "error", err)
+				http.Error(w, `{"error":"Task not found"}`, http.StatusNotFound)
+				return
+			}
+
+			reply := make(chan todo.Response)
+			actor <- todo.Request{Op: "delete", Index: idv, ReplyCh: reply}
+			res := <-reply
+			slog.Debug("received actor response", "response", res)
+			if res.Err != nil {
+				slog.Error("Invalid task:", "index", id)
+				http.Error(w, `{"error":"could not read request"}`, http.StatusInternalServerError)
+				return
+			}
+		} else {
+			slog.Error("no index parameter", "index", id)
+			http.Error(w, `{"error":"Task not found"}`, http.StatusNotFound)
+			return
+		}
+
+		//SaveSnapshot(actor)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNoContent) //204
 	}
-
-	tdesc := "-task=" + task.Description
-	tstatus := "-status=" + task.Status
-	args := []string{"cmd", tdesc, tstatus}
-	process(args, "")
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(task)
 }
 
-func UpdateByID(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	logger := LoggerFromContext(ctx)
-	slog.SetDefault(logger)
-	slog.Info("received request to update todo item")
-	task := requestMessage(r)
-	if task == nil {
-		slog.Error("Invalid task:", "task", task)
-		http.Error(w, `{"error":"could not read request"}`, http.StatusBadRequest)
-		return
+func FindByID(actor chan todo.Request) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		slog.SetDefault(LoggerFromContext(r.Context()))
+		slog.Debug("received request to find todo item")
+		var intIndex int
+		id := r.PathValue("id")
+		if id != "" {
+			idv, err := strconv.Atoi(id)
+			intIndex = idv
+			if err != nil {
+				slog.Error("invalid index parameter", "raw", id, "error", err)
+				http.Error(w, `{"error":"Task not found"}`, http.StatusNotFound)
+				return
+			}
+		} else {
+			slog.Error("no index parameter", "index", id)
+			http.Error(w, `{"error":"Task not found"}`, http.StatusNotFound)
+			return
+		}
+		reply := make(chan todo.Response)
+		actor <- todo.Request{Op: "get", Index: intIndex, ReplyCh: reply}
+		res := <-reply
+		slog.Debug("received actor response", "response", res.Task)
+		if res.Err != nil {
+			slog.Error("Invalid task:", "index", id)
+			http.Error(w, `{"error":"could not read request"}`, http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(res.Task)
+		slog.Info("returned one task", "index", id, "task", res.Task)
+		slog.Debug("Request timings", "method", r.Method, "Url", r.RequestURI, "time", time.Since(start).Milliseconds())
 	}
-	tupt := "-update=" + r.PathValue("id")
-	tdesc := "-task=" + task.Description
-	tstatus := "-status=" + task.Status
-	args := []string{"cmd", tupt, tdesc, tstatus}
-	if err := process(args, r.PathValue("id")); err != nil {
-		http.Error(w, `{"error":"Task not found"}`, http.StatusNotFound)
-		slog.Warn("Index not found", "error", err)
-		return
-	}
-	if err := json.NewEncoder(w).Encode(task); err != nil {
-		slog.Error("Failed to encode task response", "error", err)
-		http.Error(w, `{"error":"Internal Server Error"}`, http.StatusInternalServerError)
-		return
-	}
-	//	w.Header().Set("Content-Type", "application/json")
-	//	w.WriteHeader(http.StatusAccepted)
-	//json.NewEncoder(w).Encode(`{"error":""}`)
-	slog.Info("Update OK")
 }
 
-func DeleteByID(w http.ResponseWriter, r *http.Request) {
-	slog.SetDefault(LoggerFromContext(r.Context()))
+func GetAll(actor chan todo.Request) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		slog.SetDefault(LoggerFromContext(r.Context()))
+		//slog.Info("received request to fetch all todo list")
 
-	slog.Info("received request to delete a todo item")
+		reply := make(chan todo.Response)
+		actor <- todo.Request{Op: "list", ReplyCh: reply}
+		res := <-reply
+		//slog.Debug("received actor response", "response", res.Tasks)
+		if res.Err != nil {
+			slog.Error("Internal error:")
+			http.Error(w, `{"error":"could not read request"}`, http.StatusInternalServerError)
+			return
+		}
 
-	tdel := "-delete=" + r.PathValue("id")
-	args := []string{"cmd", tdel}
-	if process(args, r.PathValue("id")) != nil {
-		http.Error(w, `{"error":"Task not found"}`, http.StatusNotFound)
-		slog.Warn("Task not found")
-		return
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(res.Tasks)
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusNoContent) //204
-}
-
-func FindByID(w http.ResponseWriter, r *http.Request) {
-	start := time.Now()
-	slog.SetDefault(LoggerFromContext(r.Context()))
-	slog.Debug("received request to find todo item")
-	todoList, err := todo.LoadFile(todo.TodoFile)
-	if err != nil {
-		slog.Error("Failed to load tasks", "error", err)
-		http.Error(w, `{"error":"Internal Server Error"}`, http.StatusInternalServerError)
-		return
-	}
-
-	idv, err := strconv.Atoi(r.PathValue("id"))
-	if err != nil {
-		slog.Error("invalid index parameter", "raw", r.PathValue("id"), "error", err)
-		http.Error(w, `{"error":"invalid index parameter"}`, http.StatusNotFound)
-		return
-	}
-
-	// now check bounds: valid indices are 0 through len(todoList)-1
-	if idv < 0 || idv >= len(todoList) {
-		slog.Error("index out of range", "index", idv, "length", len(todoList))
-		http.Error(w, `{"error":"index out of range"}`, http.StatusNotFound)
-		return
-	}
-
-	todoItem := todoList[idv]
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(todoItem)
-	slog.Info("returned one task", "index", idv, "task", todoItem)
-	slog.Debug("Request timings", "method", r.Method, "Url", r.RequestURI, "time", time.Since(start))
-
-}
-
-func GetAll(w http.ResponseWriter, r *http.Request) {
-	slog.SetDefault(LoggerFromContext(r.Context()))
-	slog.Info("received request to fetch all todo list")
-
-	todoList, err := todo.LoadFile(todo.TodoFile)
-	if err != nil {
-		slog.Error("Failed to load tasks", "error", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(todoList)
 }
 
 func GetList(w http.ResponseWriter, r *http.Request) {
