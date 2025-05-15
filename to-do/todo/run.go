@@ -1,10 +1,36 @@
 package todo
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log/slog"
+	"os"
+	"sync"
+	"time"
 )
+
+func InitLogwithTraceID() {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	traceID := fmt.Sprintf("trace-%d", time.Now().UnixNano())
+	ctx := context.WithValue(context.Background(), "traceID", traceID)
+	slog.SetDefault(logger.With("traceID", ctx.Value("traceID")))
+}
+
+func RunCLI(ctx context.Context, wg *sync.WaitGroup, actor chan Request) {
+	defer wg.Done()
+	InitLogwithTraceID()
+
+	err := Run(os.Args, actor)
+	if err != nil {
+		slog.Error("not found", "error", err)
+		return
+	}
+	slog.Debug("runCLI goroutine waiting for context done")
+	<-ctx.Done()
+	slog.Debug("runCLI goroutine context done now completed")
+
+}
 
 func Run(args []string, actor chan Request) error {
 	fs := flag.NewFlagSet("todo", flag.ContinueOnError)

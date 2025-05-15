@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 )
 
@@ -44,4 +46,11 @@ func LoggerFromContext(ctx context.Context) *slog.Logger {
 		return lg
 	}
 	return slog.Default()
+}
+
+func WaitForInterrupt() {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT)
+	sig := <-sigChan
+	slog.Info("Received Interrupt Signal:", "Signal", sig)
 }

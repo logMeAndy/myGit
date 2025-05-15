@@ -1,12 +1,14 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"html/template"
 	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 	"to-do/todo"
 )
@@ -26,6 +28,46 @@ func requestMessage(r *http.Request) *todo.ToDoTask {
 	}
 	slog.Debug("Unmarshal parsed task data ", "task list", task)
 	return &task
+}
+
+func RunHttpServer(ctx context.Context, wg *sync.WaitGroup, actor chan todo.Request) {
+	defer wg.Done()
+
+	mux := http.NewServeMux()
+
+	fs := http.FileServer(http.Dir("static"))
+	mux.Handle("/about/", http.StripPrefix("/about/", fs))              //static page
+	mux.Handle("/list", WithLoggingAndTrace(http.HandlerFunc(GetList))) //dyanmic page
+
+	//APIs
+	mux.Handle("PUT /todo/{id}", WithLoggingAndTrace(UpdateByID(actor)))
+	mux.Handle("DELETE /todo/{id}", WithLoggingAndTrace(DeleteByID(actor)))
+	mux.Handle("GET /todo", WithLoggingAndTrace(http.HandlerFunc(GetAll(actor))))
+	mux.Handle("POST /todo", WithLoggingAndTrace(Create(actor)))
+	mux.Handle("GET /todo/{id}", WithLoggingAndTrace(FindByID(actor)))
+
+	server := &http.Server{Addr: ":8080", Handler: mux}
+	go func() {
+		slog.Info("Http Server listining on port :8080")
+		if err := server.ListenAndServe(); err != nil {
+			slog.Error("Error Listining to port 8080", "server", err)
+		}
+		slog.Info("HTTPServer ListenAndServe goroutine stopped")
+	}()
+
+	slog.Debug("runHTTPServer goroutine waiting for context done")
+	<-ctx.Done()
+
+	// Initiate graceful shutdown
+	slog.Info("HTTP Server shutting down...")
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelShutdown()
+
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		slog.Error("HTTP server Shutdown error", "error", err)
+	} else {
+		slog.Info("HTTP Server gracefully stopped")
+	}
 }
 
 func Create(actor chan todo.Request) http.HandlerFunc {
@@ -48,27 +90,12 @@ func Create(actor chan todo.Request) http.HandlerFunc {
 			http.Error(w, `{"error":"could not read request"}`, http.StatusInternalServerError)
 			return
 		}
-		//SaveSnapshot(actor)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(task)
 	}
 
 }
-
-/*
-func SaveSnapshot(actor chan todo.Request) {
-	slog.Debug("requesting full list to be saved")
-	listCh := make(chan todo.Response)
-	actor <- todo.Request{Op: "list", ReplyCh: listCh}
-	listRes := <-listCh
-	slog.Debug("received full list", "count", len(listRes.Tasks))
-	//todo.SaveFile((<-listCh).Tasks, todo.TodoFile)
-	if err := todo.SaveFile(listRes.Tasks, todo.TodoFile); err != nil {
-		slog.Error("failed to save tasks", "error", err)
-	}
-
-} */
 
 func UpdateByID(actor chan todo.Request) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -105,8 +132,6 @@ func UpdateByID(actor chan todo.Request) http.HandlerFunc {
 			http.Error(w, `{"error":"Task not found"}`, http.StatusNotFound)
 			return
 		}
-
-		//SaveSnapshot(actor)
 
 		if err := json.NewEncoder(w).Encode(task); err != nil {
 			slog.Error("Failed to encode task response", "error", err)
@@ -148,8 +173,6 @@ func DeleteByID(actor chan todo.Request) http.HandlerFunc {
 			http.Error(w, `{"error":"Task not found"}`, http.StatusNotFound)
 			return
 		}
-
-		//SaveSnapshot(actor)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNoContent) //204
