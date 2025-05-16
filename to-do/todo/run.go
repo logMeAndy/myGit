@@ -39,7 +39,7 @@ func Run(args []string, actor chan Request) error {
 	var status = fs.String("status", "", "New status e.g. not started, completed, started, etc.,")
 	var updateIndex = fs.Int("update", -1, "Index of task to update, e.g. update=0 -task=newValue (optional -status=newStatus)")
 	var deleteIndex = fs.Int("delete", -1, "Index of task to delete (e.g. delete=0 )")
-
+	var user = fs.String("user", "default", "User ID (required)")
 	fs.Parse(args[1:]) // skip program name
 
 	slog.Debug("args", "deleteIndex", deleteIndex, "updateIndex", updateIndex, "status", status, "taskDesc", taskDesc)
@@ -52,7 +52,7 @@ func Run(args []string, actor chan Request) error {
 			t = ToDoTask{Description: *taskDesc, Status: "not started"}
 		}
 		reply := make(chan Response)
-		actor <- Request{Op: "update", Task: t, Index: *updateIndex, ReplyCh: reply}
+		actor <- Request{Op: "update", UserID: *user, Task: t, Index: *updateIndex, ReplyCh: reply}
 		res := <-reply
 		slog.Debug("received actor response", "response", res)
 		if res.Err != nil {
@@ -71,7 +71,7 @@ func Run(args []string, actor chan Request) error {
 			t = ToDoTask{Description: *taskDesc, Status: "not started"}
 		}
 		reply := make(chan Response)
-		actor <- Request{Op: "add", Task: t, ReplyCh: reply}
+		actor <- Request{Op: "add", UserID: *user, Task: t, ReplyCh: reply}
 		res := <-reply
 		slog.Debug("received actor response", "response", res)
 		if res.Err != nil {
@@ -83,7 +83,7 @@ func Run(args []string, actor chan Request) error {
 	case *deleteIndex >= 0:
 		slog.Debug("deleting index...", "task", *deleteIndex)
 		reply := make(chan Response)
-		actor <- Request{Op: "delete", Index: *deleteIndex, ReplyCh: reply}
+		actor <- Request{Op: "delete", UserID: *user, Index: *deleteIndex, ReplyCh: reply}
 		res := <-reply
 		slog.Debug("received actor response", "response", res)
 		if res.Err != nil {
@@ -93,7 +93,7 @@ func Run(args []string, actor chan Request) error {
 
 	default:
 		reply := make(chan Response)
-		actor <- Request{Op: "list", ReplyCh: reply}
+		actor <- Request{Op: "list", UserID: *user, ReplyCh: reply}
 		res := <-reply
 		slog.Info("received actor response", "response", res.Tasks)
 	}

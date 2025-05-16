@@ -6,6 +6,7 @@ import (
 )
 
 type Request struct {
+	UserID  string
 	Op      string
 	Index   int
 	Task    ToDoTask
@@ -14,17 +15,22 @@ type Request struct {
 
 type Response struct {
 	Err   error
-	Task  *ToDoTask  // add this if you want to return a single task
-	Tasks []ToDoTask // and you can still return the whole slice
+	Task  *ToDoTask  // single task
+	Tasks []ToDoTask //all task
 }
 
 var ReqChan = make(chan Request, 1000)
 
-// Actor runs in one goroutine and serializes access to `tasks`.
-func Actor(initial []ToDoTask) chan Request {
-	tasks := append([]ToDoTask(nil), initial...)
+func Actor(initial map[string][]ToDoTask) chan Request {
+	//tasks := append([]ToDoTask(nil), initial...)
+
+	lists := make(map[string][]ToDoTask, len(initial))
+	for user, tasks := range initial {
+		lists[user] = append([]ToDoTask(nil), tasks...)
+	}
 
 	for req := range ReqChan {
+		tasks := lists[req.UserID]
 		switch req.Op {
 		case "get":
 			slog.Debug("actor get")
@@ -39,17 +45,19 @@ func Actor(initial []ToDoTask) chan Request {
 			//slog.Info("updated todo list", "task", tasks)
 		case "add":
 			//slog.Debug("adding task...", "task", req.Task)
+			//req.Task.ID = len(tasks)
 			if req.Task.Status != "" {
 				tasks = append(tasks, req.Task)
 			} else {
 				t := ToDoTask{Description: req.Task.Description, Status: "not started"}
 				tasks = append(tasks, t)
 			}
-			go func(s []ToDoTask) {
-				if err := SaveFile(s, TodoFile); err != nil {
-					slog.Error("actor: failed to save tasks", "error", err)
-				}
-			}(append([]ToDoTask(nil), tasks...))
+			lists[req.UserID] = tasks
+			//go func(s []ToDoTask) {
+			if err := SaveFile(tasks, req.UserID+"_"+TodoFile); err != nil {
+				slog.Error("actor: failed to save tasks", "error", err)
+			}
+			//}(append([]ToDoTask(nil), tasks...))
 			req.ReplyCh <- Response{Task: &tasks[len(tasks)-1]}
 			//slog.Info("Added new task", "task", tasks)
 
@@ -60,7 +68,7 @@ func Actor(initial []ToDoTask) chan Request {
 			} else {
 				tasks[req.Index] = req.Task
 				req.ReplyCh <- Response{Task: &tasks[req.Index]}
-				if err := SaveFile(tasks, TodoFile); err != nil {
+				if err := SaveFile(tasks, req.UserID+"_"+TodoFile); err != nil {
 					slog.Error("actor: failed to save tasks", "error", err)
 					req.ReplyCh <- Response{Err: fmt.Errorf("actor: failed to save tasks -  %d ", err)}
 				}
@@ -71,10 +79,13 @@ func Actor(initial []ToDoTask) chan Request {
 				req.ReplyCh <- Response{Err: fmt.Errorf("index %d out of range", req.Index)}
 			} else {
 				tasks = append(tasks[:req.Index], tasks[req.Index+1:]...)
-				req.ReplyCh <- Response{Tasks: append([]ToDoTask(nil), tasks...)}
-				if err := SaveFile(tasks, TodoFile); err != nil {
+
+				if err := SaveFile(tasks, req.UserID+"_"+TodoFile); err != nil {
 					slog.Error("actor: failed to save tasks", "error", err)
-					req.ReplyCh <- Response{Err: fmt.Errorf("actor: failed to save tasks -  %d ", err)}
+					req.ReplyCh <- Response{Err: fmt.Errorf("could not save tasks: %v", err)}
+				} else {
+					req.ReplyCh <- Response{Tasks: append([]ToDoTask(nil), tasks...)}
+					slog.Info("Revised task list", "tasks", tasks)
 				}
 			}
 		default:

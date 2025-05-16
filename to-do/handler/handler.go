@@ -40,11 +40,14 @@ func RunHttpServer(ctx context.Context, wg *sync.WaitGroup, actor chan todo.Requ
 	mux.Handle("/list", WithLoggingAndTrace(http.HandlerFunc(GetList))) //dyanmic page
 
 	//APIs
-	mux.Handle("PUT /todo/{id}", WithLoggingAndTrace(UpdateByID(actor)))
-	mux.Handle("DELETE /todo/{id}", WithLoggingAndTrace(DeleteByID(actor)))
-	mux.Handle("GET /todo", WithLoggingAndTrace(http.HandlerFunc(GetAll(actor))))
-	mux.Handle("POST /todo", WithLoggingAndTrace(Create(actor)))
-	mux.Handle("GET /todo/{id}", WithLoggingAndTrace(FindByID(actor)))
+	mux.Handle("PUT /todo/users/{userID}/{id}", WithLoggingAndTrace(UpdateByID(actor)))
+	mux.Handle("DELETE /todo/users/{userID}/{id}", WithLoggingAndTrace(DeleteByID(actor)))
+	mux.Handle("GET /todo/users/{userID}", WithLoggingAndTrace(http.HandlerFunc(GetAll(actor))))
+	//mux.Handle("POST /todo", WithLoggingAndTrace(Create(actor)))
+	mux.Handle("GET /todo/users/{userID}/{id}", WithLoggingAndTrace(FindByID(actor)))
+
+	// e.g. POST /users/{userID}/todo
+	mux.Handle("POST /todo/users/{userID}", WithLoggingAndTrace(Create(actor)))
 
 	server := &http.Server{Addr: ":8080", Handler: mux}
 	go func() {
@@ -70,10 +73,18 @@ func RunHttpServer(ctx context.Context, wg *sync.WaitGroup, actor chan todo.Requ
 	}
 }
 
+func Send(actor chan todo.Request, op, user string, idx int, task todo.ToDoTask) (resp todo.Response) {
+	ch := make(chan todo.Response, 1)
+	actor <- todo.Request{Op: op, UserID: user, Index: idx, Task: task, ReplyCh: ch}
+	return <-ch
+}
+
 func Create(actor chan todo.Request) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		slog.SetDefault(LoggerFromContext(r.Context()))
-		//slog.Info("received request to create a todo")
+		user := r.PathValue("userID")
+
+		slog.Info("received request to create a todo", "user", user)
 		task := requestMessage(r)
 		if task == nil {
 			slog.Error("Invalid task:", "task", task)
@@ -82,7 +93,7 @@ func Create(actor chan todo.Request) http.HandlerFunc {
 		}
 		//slog.Debug("sending add command", "task", task)
 		reply := make(chan todo.Response)
-		actor <- todo.Request{Op: "add", Task: *task, ReplyCh: reply}
+		actor <- todo.Request{Op: "add", UserID: user, Task: *task, ReplyCh: reply}
 		res := <-reply
 		//slog.Debug("received actor response", "response", res)
 		if res.Err != nil {
@@ -101,6 +112,8 @@ func UpdateByID(actor chan todo.Request) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		slog.SetDefault(LoggerFromContext(r.Context()))
 		slog.Info("received request to update todo item")
+		user := r.PathValue("userID")
+
 		task := requestMessage(r)
 		if task == nil {
 			slog.Error("Invalid task:", "task", task)
@@ -117,11 +130,12 @@ func UpdateByID(actor chan todo.Request) http.HandlerFunc {
 				return
 			}
 
-			reply := make(chan todo.Response)
-			actor <- todo.Request{Op: "update", Task: *task, Index: idv, ReplyCh: reply}
-			res := <-reply
-			slog.Debug("received actor response", "response", res)
-			if res.Err != nil {
+			//reply := make(chan todo.Response)
+			//actor <- todo.Request{Op: "update", UserID: user, Task: *task, Index: idv, ReplyCh: reply}
+			//res := <-reply
+			//slog.Debug("received actor response", "response", res)
+
+			if Send(actor, "update", user, idv, *task).Err != nil {
 				slog.Error("Invalid task:", "index", id)
 				http.Error(w, `{"error":"could not read request"}`, http.StatusInternalServerError)
 				return
@@ -139,7 +153,7 @@ func UpdateByID(actor chan todo.Request) http.HandlerFunc {
 			return
 		}
 		//	w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusAccepted)
+		//w.WriteHeader(http.StatusAccepted)
 		//json.NewEncoder(w).Encode(`{"error":""}`)
 		slog.Info("Update OK")
 	}
@@ -149,6 +163,7 @@ func DeleteByID(actor chan todo.Request) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		slog.SetDefault(LoggerFromContext(r.Context()))
 		slog.Info("received request to delete a todo item")
+		user := r.PathValue("userID")
 
 		id := r.PathValue("id")
 		if id != "" { //create and findAll
@@ -160,7 +175,7 @@ func DeleteByID(actor chan todo.Request) http.HandlerFunc {
 			}
 
 			reply := make(chan todo.Response)
-			actor <- todo.Request{Op: "delete", Index: idv, ReplyCh: reply}
+			actor <- todo.Request{Op: "delete", UserID: user, Index: idv, ReplyCh: reply}
 			res := <-reply
 			slog.Debug("received actor response", "response", res)
 			if res.Err != nil {
@@ -183,7 +198,9 @@ func FindByID(actor chan todo.Request) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		slog.SetDefault(LoggerFromContext(r.Context()))
-		slog.Debug("received request to find todo item")
+		user := r.PathValue("userID")
+
+		slog.Debug("received request to find todo item", "user", user)
 		var intIndex int
 		id := r.PathValue("id")
 		if id != "" {
@@ -200,7 +217,7 @@ func FindByID(actor chan todo.Request) http.HandlerFunc {
 			return
 		}
 		reply := make(chan todo.Response)
-		actor <- todo.Request{Op: "get", Index: intIndex, ReplyCh: reply}
+		actor <- todo.Request{Op: "get", UserID: user, Index: intIndex, ReplyCh: reply}
 		res := <-reply
 		slog.Debug("received actor response", "response", res.Task)
 		if res.Err != nil {
@@ -221,9 +238,10 @@ func GetAll(actor chan todo.Request) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		slog.SetDefault(LoggerFromContext(r.Context()))
 		//slog.Info("received request to fetch all todo list")
+		user := r.PathValue("userID")
 
 		reply := make(chan todo.Response)
-		actor <- todo.Request{Op: "list", ReplyCh: reply}
+		actor <- todo.Request{Op: "list", UserID: user, ReplyCh: reply}
 		res := <-reply
 		//slog.Debug("received actor response", "response", res.Tasks)
 		if res.Err != nil {

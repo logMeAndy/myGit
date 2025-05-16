@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-func RunREPL(actor chan Request) {
+func RunREPL(actor chan Request, userID string) {
 	scanner := bufio.NewScanner(os.Stdin)
 	fmt.Println("Welcome to TODO REPL—type ‘help’ for commands.")
 
@@ -30,13 +30,13 @@ func RunREPL(actor chan Request) {
 				continue
 			}
 			desc := strings.Join(args, " ")
-			AddItem(actor, desc)
+			AddItem(actor, userID, desc)
 			continue
 		case "bye", "quit", "exit":
 			fmt.Println("Bye !!")
 			return
 		case "list":
-			getList(actor)
+			getList(actor, userID)
 			continue
 		case "help":
 			fmt.Println("Commands: add, list, update, delete, exit")
@@ -51,7 +51,7 @@ func RunREPL(actor chan Request) {
 				continue
 			}
 			newDesc := strings.Join(args[1:], " ")
-			UpdateItem(actor, idx, newDesc)
+			UpdateItem(actor, userID, idx, newDesc)
 			continue
 		case "delete", "remove":
 			if len(args) == 0 {
@@ -63,7 +63,7 @@ func RunREPL(actor chan Request) {
 				fmt.Println("Invalid Index - Usage: update 0 <new description>", err)
 				continue
 			}
-			DeleteItem(actor, idx)
+			DeleteItem(actor, userID, idx)
 			continue
 		default:
 			fmt.Println("Bad command")
@@ -74,9 +74,9 @@ func RunREPL(actor chan Request) {
 
 }
 
-func AddItem(actor chan Request, desc string) {
+func AddItem(actor chan Request, user string, desc string) {
 	reply := make(chan Response)
-	actor <- Request{Op: "add", Task: ToDoTask{Description: desc, Status: "Not Started"}, ReplyCh: reply}
+	actor <- Request{Op: "add", UserID: user, Task: ToDoTask{Description: desc, Status: "Not Started"}, ReplyCh: reply}
 	res := <-reply
 	if res.Err != nil {
 		fmt.Println("failed to process this request: ", res.Err)
@@ -85,9 +85,9 @@ func AddItem(actor chan Request, desc string) {
 	fmt.Printf("New item added, Description : %v, Status: Not Started \n", res.Task.Description)
 }
 
-func UpdateItem(actor chan Request, idx int, newDesc string) {
+func UpdateItem(actor chan Request, user string, idx int, newDesc string) {
 	reply := make(chan Response)
-	actor <- Request{Op: "update", Task: ToDoTask{Description: newDesc, Status: "Not Started"}, Index: idx, ReplyCh: reply}
+	actor <- Request{Op: "update", UserID: user, Task: ToDoTask{Description: newDesc, Status: "Not Started"}, Index: idx, ReplyCh: reply}
 	res := <-reply
 	if res.Err != nil {
 		fmt.Println("failed to process this request: ", res.Err)
@@ -96,9 +96,9 @@ func UpdateItem(actor chan Request, idx int, newDesc string) {
 	fmt.Printf("Updated item, New Description : %v \n", res.Task.Description)
 }
 
-func DeleteItem(actor chan Request, idx int) {
+func DeleteItem(actor chan Request, user string, idx int) {
 	reply := make(chan Response)
-	actor <- Request{Op: "delete", Index: idx, ReplyCh: reply}
+	actor <- Request{Op: "delete", UserID: user, Index: idx, ReplyCh: reply}
 	res := <-reply
 	if res.Err != nil {
 		fmt.Println("failed to process this request: ", res.Err)
@@ -107,9 +107,9 @@ func DeleteItem(actor chan Request, idx int) {
 	fmt.Printf("Item Deleted !!  \n")
 }
 
-func getList(actor chan Request) {
+func getList(actor chan Request, user string) {
 	reply := make(chan Response)
-	actor <- Request{Op: "list", ReplyCh: reply}
+	actor <- Request{Op: "list", UserID: user, ReplyCh: reply}
 	res := <-reply
 	if res.Err != nil {
 		fmt.Println("failed to process this request: ", res.Err)

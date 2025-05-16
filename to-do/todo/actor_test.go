@@ -2,6 +2,9 @@ package todo
 
 import (
 	"fmt"
+	"log"
+	"log/slog"
+	"os"
 	"testing"
 	"time"
 )
@@ -13,9 +16,20 @@ func TestActorConcurrentAdded(t *testing.T) {
 
 	done := make(chan bool)
 
-	initialTasks, _ := LoadFile(TodoFile)
+	//initialTasks, _ := LoadFile(TodoFile)
+	cwd, err := os.Getwd()
+	if err != nil {
+		log.Fatal("cannot determine cwd:", err)
+	}
+	slog.Info("Get Workding Directory ", "DIR", cwd)
 
-	go Actor(initialTasks)
+	userLists, err := LoadAllTasksInDir(cwd)
+	if err != nil {
+		log.Fatal("failed loading tasks:", err)
+	}
+	slog.Info("Loaded files ...", "DATA", userLists)
+
+	go Actor(userLists)
 	const n = 10000
 	// launch n subtests in parallel, each adding one task
 
